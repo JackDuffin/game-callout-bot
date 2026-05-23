@@ -12,7 +12,7 @@ module.exports = {
 
   async execute(interaction) {
     const input = interaction.options.getString('game').toLowerCase();
-    const sessions = getSessions();
+    const sessions = getSessions(interaction.guildId);
 
     const userSessions = sessions.filter(s =>
       s.game.toLowerCase() === input &&
@@ -39,6 +39,12 @@ module.exports = {
           // Message may have been deleted
         }
       }
+
+      if (liveSession?.timers) {
+        clearTimeout(liveSession.timers.reminderTimer);
+        clearTimeout(liveSession.timers.startTimer);
+      }
+
       delete interaction.client.rsvpSessions?.[session.id];
 
       return interaction.reply({

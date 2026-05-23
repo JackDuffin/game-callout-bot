@@ -2,3 +2,6 @@ node_modules/
 .env
 data/sessions.json
 data/stats.json
+data/bot.db
+data/bot.db-shm
+data/bot.db-wal

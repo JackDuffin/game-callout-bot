@@ -6,16 +6,18 @@ module.exports = {
     .setDescription('List all available game groups'),
 
   async execute(interaction) {
+    await interaction.deferReply({ flags: 64 });
+
     const guild = interaction.guild;
     const managedRoles = guild.roles.cache.filter(r =>
       r.name !== '@everyone' && !r.managed
     );
 
     if (managedRoles.size === 0) {
-      return interaction.reply({ content: 'No game groups exist yet. Use /addgame to create one!', flags: 64 });
+      return interaction.editReply({ content: 'No game groups exist yet. Use /addgame to create one!' });
     }
 
     const list = managedRoles.map(r => `• ${r.name} (${r.members.size} members)`).join('\n');
-    await interaction.reply({ content: `🎮 **Available game groups:**\n${list}`, flags: 64 });
+    await interaction.editReply({ content: `🎮 **Available game groups:**\n${list}` });
   }
 };

@@ -1,8 +1,11 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
-const { readSessions, removeExpiredSessions, getSessions, cancelSession } = require('./utils/sessionStore');
+const { readSessions, removeExpiredSessions, getSessions, cancelSession, updateSession } = require('./utils/sessionStore');
 const { scheduleTimers } = require('./commands/schedule');
+
+// Initialise database on startup
+require('./utils/db');
 
 const client = new Client({
   intents: [
@@ -14,6 +17,7 @@ const client = new Client({
 
 client.commands = new Collection();
 client.rsvpSessions = {};
+client.pendingEdits = {};
 
 const commandFiles = fs.readdirSync('./commands').filter(f => f.endsWith('.js'));
 for (const file of commandFiles) {
@@ -26,14 +30,14 @@ client.once('clientReady', async () => {
 
   removeExpiredSessions();
 
-  const sessions = readSessions();
+  const guild = client.guilds.cache.first();
+  const sessions = readSessions(guild.id);
   const now = Date.now();
 
   for (const session of sessions) {
     if (session.cancelled || session.time <= now) continue;
 
     try {
-      const guild = client.guilds.cache.first();
       const channel = await client.channels.fetch(session.channelId);
       const role = guild.roles.cache.find(r => r.name.toLowerCase() === session.game.toLowerCase());
 
@@ -44,10 +48,14 @@ client.once('clientReady', async () => {
         rsvpNo: session.rsvpNo || [],
         message: null,
         role,
-        sessionTime: session.time
+        sessionTime: session.time,
+        extraMessage: session.extraMessage || '',
+        timers: null
       };
 
-      scheduleTimers(client, session.id, session.time, role, channel);
+      const timers = scheduleTimers(client, session.id, session.time, role, channel);
+      client.rsvpSessions[session.id].timers = timers;
+
       console.log(`🔁 Restored timer for ${session.game} session at ${new Date(session.time).toLocaleString()}`);
     } catch (err) {
       console.error(`Failed to restore session ${session.id}:`, err.message);
@@ -55,12 +63,20 @@ client.once('clientReady', async () => {
   }
 });
 
+client.on('error', error => {
+  console.error('Client error:', error);
+});
+
+process.on('unhandledRejection', error => {
+  console.error('Unhandled promise rejection:', error);
+});
+
 client.on('interactionCreate', async interaction => {
 
   // Handle cancel select menu
   if (interaction.isStringSelectMenu() && interaction.customId === 'cancel_select') {
     const sessionId = interaction.values[0];
-    const sessions = getSessions();
+    const sessions = getSessions(interaction.guildId);
     const session = sessions.find(s => s.id === sessionId);
 
     if (!session) {
@@ -82,12 +98,41 @@ client.on('interactionCreate', async interaction => {
       }
     }
 
+    if (liveSession?.timers) {
+      clearTimeout(liveSession.timers.reminderTimer);
+      clearTimeout(liveSession.timers.startTimer);
+    }
+
     delete interaction.client.rsvpSessions?.[sessionId];
 
     await interaction.update({
       content: `✅ The **${session.game}** session scheduled for <t:${Math.floor(session.time / 1000)}:F> has been cancelled.`,
       components: []
     });
+    return;
+  }
+
+  // Handle edit select menu
+  if (interaction.isStringSelectMenu() && interaction.customId === 'edit_select') {
+    const sessionId = interaction.values[0];
+    const sessions = getSessions(interaction.guildId);
+    const session = sessions.find(s => s.id === sessionId);
+
+    if (!session) {
+      return interaction.update({ content: '❌ Session not found — it may have already ended or been cancelled.', components: [] });
+    }
+
+    const pendingEdit = interaction.client.pendingEdits?.[interaction.user.id];
+    if (!pendingEdit) {
+      return interaction.update({ content: '❌ Edit details expired — please run `/editschedule` again.', components: [] });
+    }
+
+    delete interaction.client.pendingEdits[interaction.user.id];
+
+    await interaction.update({ content: 'Applying edit...', components: [] });
+
+    const { applyEdit } = require('./commands/editschedule');
+    await applyEdit(interaction, session, pendingEdit.newTimeInput, pendingEdit.newMessage, true);
     return;
   }
 
@@ -111,6 +156,12 @@ client.on('interactionCreate', async interaction => {
 
       if (isYes) session.rsvpYes.push(userMention);
       else session.rsvpNo.push(userMention);
+
+      // Persist RSVP update to database
+      updateSession(sessionId, {
+        rsvpYes: session.rsvpYes,
+        rsvpNo: session.rsvpNo
+      });
 
       const oldEmbed = interaction.message.embeds[0];
       const updated = EmbedBuilder.from(oldEmbed)

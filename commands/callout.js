@@ -14,6 +14,8 @@ module.exports = {
         .setRequired(false)),
 
   async execute(interaction) {
+    await interaction.deferReply();
+
     const guild = interaction.guild;
     const input = interaction.options.getString('game').toLowerCase();
     const extraMessage = interaction.options.getString('message') || '';
@@ -23,14 +25,14 @@ module.exports = {
 
     if (!role) {
       const list = gameRoles.map(r => `• ${r.name}`).join('\n');
-      return interaction.reply({ content: `❌ No game group called **${input}**. Available groups:\n${list}`, flags: 64 });
+      return interaction.editReply({ content: `❌ No game group called **${input}**. Available groups:\n${list}` });
     }
 
     if (!interaction.member.roles.cache.has(role.id)) {
-      return interaction.reply({ content: `❌ You need to be in **${role.name}** to call out its members.`, flags: 64 });
+      return interaction.editReply({ content: `❌ You need to be in **${role.name}** to call out its members.` });
     }
 
     const message = `🎮 **${role.name} session starting!** ${extraMessage}\n${role} — hop on!`;
-    await interaction.reply({ content: message, allowedMentions: { roles: [role.id] } });
+    await interaction.editReply({ content: message, allowedMentions: { roles: [role.id] } });
   }
 };

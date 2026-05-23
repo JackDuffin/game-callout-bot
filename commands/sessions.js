@@ -7,7 +7,7 @@ module.exports = {
     .setDescription('View all upcoming scheduled sessions'),
 
   async execute(interaction) {
-    const upcoming = getSessions();
+    const upcoming = getSessions(interaction.guildId);
 
     if (upcoming.length === 0) {
       return interaction.reply({ content: '📭 No sessions scheduled yet. Use /schedule to set one up!', flags: 64 });
