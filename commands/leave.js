@@ -7,12 +7,23 @@ module.exports = {
     .addStringOption(opt =>
       opt.setName('game')
         .setDescription('The game you want to leave')
-        .setRequired(true)),
+        .setRequired(true)
+        .setAutocomplete(true)),
+
+  async autocomplete(interaction) {
+    const focused = interaction.options.getFocused().toLowerCase();
+
+    // Only show games the user is currently in
+    const roles = interaction.member.roles.cache
+      .filter(r => r.name !== '@everyone' && !r.managed)
+      .map(r => r.name);
+
+    const filtered = roles.filter(name => name.toLowerCase().includes(focused)).slice(0, 25);
+    await interaction.respond(filtered.map(name => ({ name, value: name })));
+  },
 
   async execute(interaction) {
-    const guild = interaction.guild;
-    const member = interaction.member;
-
+    const member      = interaction.member;
     const memberRoles = member.roles.cache.filter(r => r.name !== '@everyone' && !r.managed);
 
     if (memberRoles.size === 0) {
@@ -20,7 +31,7 @@ module.exports = {
     }
 
     const input = interaction.options.getString('game').toLowerCase();
-    const role = memberRoles.find(r => r.name.toLowerCase() === input || r.id === input);
+    const role  = memberRoles.find(r => r.name.toLowerCase() === input || r.id === input);
 
     if (!role) {
       const list = memberRoles.map(r => `• ${r.name}`).join('\n');

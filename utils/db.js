@@ -23,7 +23,8 @@ db.exec(`
     cancelled INTEGER NOT NULL DEFAULT 0,
     rsvpYes TEXT NOT NULL DEFAULT '[]',
     rsvpNo TEXT NOT NULL DEFAULT '[]',
-    extraMessage TEXT NOT NULL DEFAULT ''
+    extraMessage TEXT NOT NULL DEFAULT '',
+    cap INTEGER DEFAULT NULL
   );
 
   CREATE TABLE IF NOT EXISTS stats (
@@ -48,6 +49,20 @@ db.exec(`
     timezone TEXT NOT NULL,
     PRIMARY KEY (guildId, userId)
   );
+
+  CREATE TABLE IF NOT EXISTS mutes (
+    guildId TEXT NOT NULL,
+    userId  TEXT NOT NULL,
+    game    TEXT NOT NULL,
+    PRIMARY KEY (guildId, userId, game)
+  );
 `);
+
+// Migration — safe to run on every startup
+const existingCols = db.prepare("PRAGMA table_info(sessions)").all().map(c => c.name);
+if (!existingCols.includes('cap')) {
+  db.exec('ALTER TABLE sessions ADD COLUMN cap INTEGER DEFAULT NULL');
+  console.log('✅ Migrated: added cap column to sessions');
+}
 
 module.exports = db;

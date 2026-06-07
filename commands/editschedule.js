@@ -9,7 +9,8 @@ module.exports = {
     .addStringOption(opt =>
       opt.setName('game')
         .setDescription('The game session to edit')
-        .setRequired(true))
+        .setRequired(true)
+        .setAutocomplete(true))
     .addStringOption(opt =>
       opt.setName('time')
         .setDescription('New time e.g. 21:30 or 21:30 25/04/27')
@@ -19,18 +20,35 @@ module.exports = {
         .setDescription('New message (use "none" to clear it)')
         .setRequired(false)),
 
+  async autocomplete(interaction) {
+    const focused   = interaction.options.getFocused().toLowerCase();
+    const sessions  = getSessions(interaction.guildId);
+
+    const userGames = [...new Set(
+      sessions
+        .filter(s => s.callerTag === interaction.user.tag)
+        .map(s => s.game)
+    )];
+
+    const filtered = userGames
+      .filter(name => name.toLowerCase().includes(focused))
+      .slice(0, 25);
+
+    await interaction.respond(filtered.map(name => ({ name, value: name })));
+  },
+
   async execute(interaction) {
     await interaction.deferReply({ flags: 64 });
 
-    const input = interaction.options.getString('game').toLowerCase();
+    const input        = interaction.options.getString('game').toLowerCase();
     const newTimeInput = interaction.options.getString('time');
-    const newMessage = interaction.options.getString('message');
+    const newMessage   = interaction.options.getString('message');
 
     if (!newTimeInput && !newMessage) {
       return interaction.editReply({ content: '❌ Please provide a new time, a new message, or both.' });
     }
 
-    const sessions = getSessions(interaction.guildId);
+    const sessions     = getSessions(interaction.guildId);
     const userSessions = sessions.filter(s =>
       s.game.toLowerCase() === input &&
       s.callerTag === interaction.user.tag
@@ -52,9 +70,9 @@ module.exports = {
     const options = userSessions
       .sort((a, b) => a.time - b.time)
       .map(s => ({
-        label: `${s.game} — ${new Date(s.time).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`,
+        label:       `${s.game} — ${new Date(s.time).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`,
         description: new Date(s.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
-        value: s.id
+        value:       s.id
       }));
 
     if (!interaction.client.pendingEdits) interaction.client.pendingEdits = {};
@@ -68,7 +86,7 @@ module.exports = {
     );
 
     await interaction.editReply({
-      content: `You have **${userSessions.length}** upcoming ${input} sessions — which one do you want to edit?`,
+      content:    `You have **${userSessions.length}** upcoming ${input} sessions — which one do you want to edit?`,
       components: [row]
     });
   }
@@ -80,7 +98,7 @@ async function applyEdit(interaction, session, newTimeInput, newMessage, fromSel
   let newSessionTime = null;
   if (newTimeInput) {
     const timezone = getTimezone(interaction.guildId, interaction.user.id);
-    const parsed = parseSessionTime(newTimeInput, timezone);
+    const parsed   = parseSessionTime(newTimeInput, timezone);
     if (parsed instanceof Error) {
       const msg = { content: `❌ ${parsed.message}`, flags: 64 };
       return fromSelect ? interaction.followUp(msg) : interaction.editReply(msg);
@@ -92,11 +110,11 @@ async function applyEdit(interaction, session, newTimeInput, newMessage, fromSel
     newSessionTime = parsed;
   }
 
-  const updatedTime = newSessionTime ? newSessionTime.getTime() : session.time;
+  const updatedTime    = newSessionTime ? newSessionTime.getTime() : session.time;
   const updatedMessage = newMessage === 'none' ? '' : (newMessage ?? session.extraMessage ?? '');
 
   updateSession(session.id, {
-    time: updatedTime,
+    time:         updatedTime,
     extraMessage: updatedMessage
   });
 
@@ -111,7 +129,7 @@ async function applyEdit(interaction, session, newTimeInput, newMessage, fromSel
 
       try {
         const channel = await interaction.client.channels.fetch(session.channelId);
-        liveSession.timers = scheduleTimers(interaction.client, session.id, updatedTime, liveSession.role, channel);
+        liveSession.timers = scheduleTimers(interaction.client, session.id, updatedTime, liveSession.role, channel, interaction.guildId);
       } catch (err) {
         console.error('Failed to reschedule timers:', err.message);
       }
@@ -132,7 +150,8 @@ async function applyEdit(interaction, session, newTimeInput, newMessage, fromSel
           callerMention,
           updatedMessage,
           liveSession.rsvpYes,
-          liveSession.rsvpNo
+          liveSession.rsvpNo,
+          liveSession.cap ?? null
         );
 
         await liveSession.message.edit({ embeds: [updatedEmbed] });

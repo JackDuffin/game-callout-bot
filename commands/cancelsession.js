@@ -8,10 +8,29 @@ module.exports = {
     .addStringOption(opt =>
       opt.setName('game')
         .setDescription('The game session to cancel')
-        .setRequired(true)),
+        .setRequired(true)
+        .setAutocomplete(true)),
+
+  async autocomplete(interaction) {
+    const focused      = interaction.options.getFocused().toLowerCase();
+    const sessions     = getSessions(interaction.guildId);
+
+    // Only show games the user has scheduled sessions for
+    const userGames = [...new Set(
+      sessions
+        .filter(s => s.callerTag === interaction.user.tag)
+        .map(s => s.game)
+    )];
+
+    const filtered = userGames
+      .filter(name => name.toLowerCase().includes(focused))
+      .slice(0, 25);
+
+    await interaction.respond(filtered.map(name => ({ name, value: name })));
+  },
 
   async execute(interaction) {
-    const input = interaction.options.getString('game').toLowerCase();
+    const input    = interaction.options.getString('game').toLowerCase();
     const sessions = getSessions(interaction.guildId);
 
     const userSessions = sessions.filter(s =>
@@ -28,23 +47,18 @@ module.exports = {
     }
 
     if (userSessions.length === 1) {
-      const session = userSessions[0];
+      const session     = userSessions[0];
+      const liveSession = interaction.client.rsvpSessions?.[session.id];
+
       cancelSession(session.id);
 
-      const liveSession = interaction.client.rsvpSessions?.[session.id];
       if (liveSession?.message) {
-        try {
-          await liveSession.message.edit({ components: [] });
-        } catch {
-          // Message may have been deleted
-        }
+        try { await liveSession.message.edit({ components: [] }); } catch {}
       }
-
       if (liveSession?.timers) {
         clearTimeout(liveSession.timers.reminderTimer);
         clearTimeout(liveSession.timers.startTimer);
       }
-
       delete interaction.client.rsvpSessions?.[session.id];
 
       return interaction.reply({
@@ -56,9 +70,9 @@ module.exports = {
     const options = userSessions
       .sort((a, b) => a.time - b.time)
       .map(s => ({
-        label: `${s.game} — ${new Date(s.time).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`,
-        description: `${new Date(s.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`,
-        value: s.id
+        label:       `${s.game} — ${new Date(s.time).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`,
+        description: new Date(s.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
+        value:       s.id
       }));
 
     const row = new ActionRowBuilder().addComponents(
@@ -69,9 +83,9 @@ module.exports = {
     );
 
     await interaction.reply({
-      content: `You have **${userSessions.length}** upcoming ${input} sessions — which one do you want to cancel?`,
+      content:    `You have **${userSessions.length}** upcoming ${input} sessions — which one do you want to cancel?`,
       components: [row],
-      flags: 64
+      flags:      64
     });
   }
 };
