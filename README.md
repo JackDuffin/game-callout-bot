@@ -1,6 +1,6 @@
 # GameCallout Bot 🎮
 
-**Version:** v0.3.0 | **Last Updated:** 07 June 2026
+**Version:** v0.4.0 | **Last Updated:** 18 June 2026
 
 ---
 
@@ -50,12 +50,12 @@ The bot is built around game groups — Discord roles that represent games our c
 
 1. **Admin creates a game group** — `/addgame Nightreign` creates an official role
 2. **Members join the group** — `/join Nightreign` assigns the role to that member
-3. **A member schedules a session** — `/schedule Nightreign 21:30` posts a session embed in the channel, pings the role, and opens RSVP buttons. An optional cap can be set for fixed-player games
+3. **A member schedules a session** — `/schedule Nightreign 21:30` posts a session embed in the channel, pings the role, and opens RSVP buttons. An optional cap can be set for fixed-player games. Sessions can be set to repeat weekly with `repeat: True`
 4. **Members RSVP** — clicking ✅ or ❌ on the embed updates it live with who's going. If a cap is set, the ✅ button locks once it's reached
 5. **Bot sends a reminder** — 30 minutes before the session, the bot mentions each member individually rather than pinging the role. Members who have muted reminders for that game are excluded
-6. **Bot announces the start** — at session time the bot mentions active members again and lists everyone who RSVPd as going
+6. **Bot announces the start** — at session time the bot mentions active members again and lists everyone who RSVPd as going. If the session is recurring, the next occurrence is automatically queued for one week later
 7. **Stats are tracked** — every session is logged against the game and the person who scheduled it
-8. **Sessions can be edited** — the scheduler can update the time or message at any time before it starts, and the embed updates in place
+8. **Sessions can be edited** — the scheduler can update the time, cap or message at any time before it starts, and the embed updates in place
 9. **History is retained** — past sessions are kept in the database and can be browsed with `/history`, with pagination for larger histories
 
 The key design principle throughout is that members can only interact with games they're actually part of. You can't ping or schedule for a game group you haven't joined — this keeps notifications relevant and prevents spam.
@@ -74,16 +74,19 @@ A core design decision throughout the bot is that members can only interact with
 Every command that takes a game name uses Discord's native autocomplete. The suggestions are context-aware — `/join` shows games you're not already in, `/leave` and `/callout` show only games you're a member of, `/cancelsession` shows only games you have upcoming sessions for.
 
 ### Callouts
-Any member who belongs to a game group can trigger an instant callout for it. The bot pings everyone in that group with a message — no scheduling required. Members who aren't in the group can't trigger callouts for it.
+Any member who belongs to a game group can trigger an instant callout for it. The bot posts an embed pinging everyone in that group — no scheduling required. A per-game cooldown of one hour prevents the same group being called out repeatedly in a short window. Members who aren't in the group can't trigger callouts for it.
 
 ### Session Scheduling
 Members can schedule game sessions in advance with a time and optional message. An optional player cap can be set for fixed-size games. The bot posts a session embed showing the time, who scheduled it, current RSVP counts, and RSVP buttons. It automatically sends a 30-minute reminder and a start ping when the session begins.
+
+### Recurring Sessions
+Any session can be set to repeat weekly by toggling `repeat: True` when scheduling. When the session starts, the bot automatically posts the next occurrence one week later with a fresh embed and RSVP buttons. The recurring embed shows a 🔁 Repeats weekly footer so members know to expect it. Each occurrence is independent — it can be cancelled individually without affecting the rest of the chain.
 
 ### Player Cap
 When scheduling a session, an optional cap sets the maximum number of players. The embed shows spots filled out of the cap (e.g. `2/3`). Once full, the ✅ button locks and displays as disabled. If a player switches their RSVP to ❌, a spot opens back up and the button re-enables automatically.
 
 ### Session Editing
-The person who scheduled a session can edit the time, the message, or both at any time before the session starts. The original embed updates in place with the new details, and any timers are rescheduled automatically.
+The person who scheduled a session can edit the time, player cap or message at any time before the session starts. The original embed updates in place with the new details, and any timers are rescheduled automatically. If a member has multiple upcoming sessions for the same game, a dropdown is shown to pick which one to edit. Setting the cap to 0 removes it entirely.
 
 ### RSVP Tracking
 When a session is scheduled, members can click ✅ I'm in or ❌ Can't make it directly on the embed. The embed updates live to show who's going and who isn't. Members can change their RSVP at any time before the session starts. RSVP data is persisted to the database so it survives bot restarts.
@@ -92,7 +95,7 @@ When a session is scheduled, members can click ✅ I'm in or ❌ Can't make it d
 Members can mute the 30-minute and session-start pings for any game they're in using `/mutereminders`. The initial session announcement still pings the role as normal — only the follow-up reminders are suppressed. Reminders can be turned back on at any time with `/unmutereminders`.
 
 ### Session Management
-Members can view all upcoming sessions with `/sessions` (optionally filtered by game), cancel sessions they scheduled with `/cancelsession`, and edit sessions with `/editschedule`. If a member has multiple upcoming sessions for the same game, the bot shows a dropdown to pick which one to act on.
+Members can view all upcoming sessions with `/sessions` (optionally filtered by game, with pagination), cancel sessions they scheduled with `/cancelsession`, and edit sessions with `/editschedule`. If a member has multiple upcoming sessions for the same game, the bot shows a dropdown to pick which one to act on.
 
 ### Session History
 Past sessions are retained in the database rather than deleted. Members can browse history with `/history`, optionally filtered by game. Results are paginated with Previous/Next buttons for servers with longer histories.
@@ -107,7 +110,7 @@ Admins can set a server-wide timezone with `/settimezone`. Members can optionall
 The bot tracks detailed stats per game. `/stats` shows a compact summary across all games. `/stats <game>` shows a full breakdown including sessions played, most active organiser, last played, group size, usual day and time, average turnout, most reliable member, and longest active streak. Detailed insights require at least 3 past sessions.
 
 ### Persistent Storage
-All sessions, stats and settings are stored in a SQLite database on the server. The bot remembers everything across restarts — scheduled sessions are restored and their timers re-registered automatically when the bot comes back online. Data is isolated per server.
+All sessions, stats and settings are stored in a SQLite database on the server. The bot remembers everything across restarts — scheduled sessions are restored and their timers re-registered automatically when the bot comes back online. Session restoration works correctly across multiple servers. Data is isolated per server.
 
 ---
 
@@ -127,12 +130,12 @@ All sessions, stats and settings are stored in a SQLite database on the server. 
 | `/join <game>` | Join a game group to receive callouts |
 | `/leave <game>` | Leave a game group |
 | `/games` | List all available game groups and member counts |
-| `/callout <game> [message]` | Ping all members of a game group instantly |
-| `/schedule <game> <time> [cap] [message]` | Schedule a session with RSVP buttons and an optional player cap |
-| `/editschedule <game> [time] [message]` | Edit a session you scheduled |
+| `/callout <game> [message]` | Ping all members of a game group instantly (1 hour cooldown per game) |
+| `/schedule <game> <time> [cap] [repeat] [message]` | Schedule a session with RSVP buttons, optional player cap, and optional weekly repeat |
+| `/editschedule <game> [time] [cap] [message]` | Edit a session you scheduled |
 | `/cancelsession <game>` | Cancel a session you scheduled |
-| `/sessions [game]` | View upcoming scheduled sessions, optionally filtered by game |
-| `/history [game]` | Browse past sessions with pagination, optionally filtered by game |
+| `/sessions [game] [page]` | View upcoming scheduled sessions, optionally filtered by game |
+| `/history [game] [page]` | Browse past sessions with pagination, optionally filtered by game |
 | `/stats [game]` | View session stats for a specific game or all games |
 | `/mutereminders <game>` | Mute 30-minute and start reminders for a game |
 | `/unmutereminders <game>` | Unmute reminders for a game |
@@ -154,7 +157,7 @@ Times are interpreted in the user's personal timezone if set, otherwise the serv
 
 These are conscious tradeoffs made for this version of the bot rather than oversights — most are on the roadmap to be addressed as the project grows.
 
-- **Session cap can't be edited** — the player cap is set when scheduling and can't be changed afterwards. To adjust it, cancel the session and reschedule
+- **Recurring sessions cancel individually** — cancelling one occurrence of a recurring session does not stop future occurrences. Cancel the next queued session manually to stop the chain
 - **Streak calculation is calendar-week based** — the longest active streak counts consecutive calendar weeks with at least one session, not rolling seven-day windows
 
 ---
@@ -166,11 +169,8 @@ These are things I'd like to explore adding at some point — nothing confirmed 
 **Maybe RSVP**
 A third RSVP option — "maybe" — for members who aren't sure yet. Lower priority since the firm yes/no split is intentional, but worth revisiting.
 
-**Callout cooldown**
-A per-game cooldown to prevent the same game being called out repeatedly in a short window. Useful for preventing accidental spam.
-
-**Recurring sessions**
-The ability to schedule a session that repeats on a fixed schedule — weekly game nights, for example — without having to reschedule each time.
+**Interaction handler consolidation**
+The pagination button handlers for `/sessions` and `/history` currently live inline in `index.js`. Moving these into their respective command files would keep `index.js` lean and make the codebase easier to navigate as it grows.
 
 **Second bot integration**
 The long term goal is to combine this with a second bot I previously built, merging both into a single unified bot. More details on that when the time comes.
@@ -219,6 +219,9 @@ Session times were previously interpreted in whatever timezone the host VM was r
 
 **Dual-instance interaction clash**
 When both the VM bot and a local development instance ran simultaneously, Discord sent interactions to both. Whichever consumed the token first won — the other's `deferReply` failed with `Unknown interaction`. Resolved by always stopping the VM instance via PM2 before running locally, and using a separate test server for local development.
+
+**Session restoration only worked for one server**
+On startup the bot was restoring timers only for the first guild in its cache, meaning sessions in any other server were silently lost after a restart. Fixed by reading all sessions from the database and looking up each session's guild by its stored `guildId`, so restoration works correctly regardless of how many servers the bot is in.
 
 ---
 

@@ -7,10 +7,8 @@ if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
 const db = new Database(path.join(dataDir, 'bot.db'));
 
-// Enable WAL mode for better performance
 db.pragma('journal_mode = WAL');
 
-// Create tables
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -24,7 +22,8 @@ db.exec(`
     rsvpYes TEXT NOT NULL DEFAULT '[]',
     rsvpNo TEXT NOT NULL DEFAULT '[]',
     extraMessage TEXT NOT NULL DEFAULT '',
-    cap INTEGER DEFAULT NULL
+    cap INTEGER DEFAULT NULL,
+    recurring INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS stats (
@@ -56,13 +55,26 @@ db.exec(`
     game    TEXT NOT NULL,
     PRIMARY KEY (guildId, userId, game)
   );
+
+  CREATE TABLE IF NOT EXISTS callout_cooldowns (
+    guildId TEXT NOT NULL,
+    game    TEXT NOT NULL,
+    lastAt  INTEGER NOT NULL,
+    PRIMARY KEY (guildId, game)
+  );
 `);
 
-// Migration — safe to run on every startup
+// Migrations — safe to run on every startup
 const existingCols = db.prepare("PRAGMA table_info(sessions)").all().map(c => c.name);
+
 if (!existingCols.includes('cap')) {
   db.exec('ALTER TABLE sessions ADD COLUMN cap INTEGER DEFAULT NULL');
   console.log('✅ Migrated: added cap column to sessions');
+}
+
+if (!existingCols.includes('recurring')) {
+  db.exec('ALTER TABLE sessions ADD COLUMN recurring INTEGER NOT NULL DEFAULT 0');
+  console.log('✅ Migrated: added recurring column to sessions');
 }
 
 module.exports = db;

@@ -3,6 +3,7 @@ const { addSession, getTimezone, getMutedUsers } = require('../utils/sessionStor
 const { v4: uuidv4 } = require('uuid');
 
 const MAX_TIMEOUT = 2_147_483_647;
+const WEEK_MS     = 7 * 24 * 60 * 60 * 1000;
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -23,6 +24,10 @@ module.exports = {
         .setRequired(false)
         .setMinValue(1)
         .setMaxValue(99))
+    .addBooleanOption(opt =>
+      opt.setName('repeat')
+        .setDescription('Repeat this session every week')
+        .setRequired(false))
     .addStringOption(opt =>
       opt.setName('message')
         .setDescription('Optional extra message')
@@ -40,17 +45,14 @@ module.exports = {
   },
 
   async execute(interaction) {
-    console.log('execute started at', Date.now());
     await interaction.deferReply();
-    console.log('deferred at', Date.now());
 
     const gameName     = interaction.options.getString('game');
     const timeInput    = interaction.options.getString('time').trim();
     const cap          = interaction.options.getInteger('cap') ?? null;
+    const recurring    = interaction.options.getBoolean('repeat') ?? false;
     const extraMessage = interaction.options.getString('message') || '';
     const guild        = interaction.guild;
-
-    console.log('Cap value received:', cap);
 
     const gameRoles = guild.roles.cache.filter(r => r.name !== '@everyone' && !r.managed);
     const role      = gameRoles.find(r => r.name.toLowerCase() === gameName.toLowerCase() || r.id === gameName);
@@ -75,7 +77,7 @@ module.exports = {
     }
 
     const sessionId = uuidv4();
-    const embed     = buildEmbed(role.name, sessionTime.getTime(), interaction.user.toString(), extraMessage, [], [], cap);
+    const embed     = buildEmbed(role.name, sessionTime.getTime(), interaction.user.toString(), extraMessage, [], [], cap, recurring);
     const row       = buildButtons(sessionId, false);
 
     await interaction.editReply({
@@ -86,7 +88,7 @@ module.exports = {
     });
 
     const message = await interaction.fetchReply();
-    const timers  = scheduleTimers(interaction.client, sessionId, sessionTime.getTime(), role, interaction.channel, interaction.guildId);
+    const timers  = scheduleTimers(interaction.client, sessionId, sessionTime.getTime(), role, interaction.channel, interaction.guildId, recurring, interaction.user.tag, cap, extraMessage);
 
     interaction.client.rsvpSessions[sessionId] = {
       rsvpYes:      [],
@@ -96,6 +98,7 @@ module.exports = {
       sessionTime:  sessionTime.getTime(),
       extraMessage,
       cap,
+      recurring,
       timers,
     };
 
@@ -112,14 +115,15 @@ module.exports = {
       rsvpNo:       [],
       extraMessage,
       cap,
+      recurring,
     });
   }
 };
 
-function buildEmbed(gameName, sessionTime, callerMention, extraMessage, rsvpYes = [], rsvpNo = [], cap = null) {
+function buildEmbed(gameName, sessionTime, callerMention, extraMessage, rsvpYes = [], rsvpNo = [], cap = null, recurring = false) {
   const capLabel = cap !== null ? ` (${rsvpYes.length}/${cap})` : '';
 
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(0x5865F2)
     .setTitle(`🎮 ${gameName} Session Scheduled!`)
     .setDescription(extraMessage || `A session has been scheduled for **${gameName}**!`)
@@ -130,6 +134,12 @@ function buildEmbed(gameName, sessionTime, callerMention, extraMessage, rsvpYes 
       { name: '❌ Not going',        value: rsvpNo.length > 0  ? rsvpNo.join('\n')  : 'Nobody yet',                              inline: true }
     )
     .setTimestamp();
+
+  if (recurring) {
+    embed.setFooter({ text: '🔁 Repeats weekly' });
+  }
+
+  return embed;
 }
 
 function buildButtons(sessionId, locked = false) {
@@ -201,7 +211,7 @@ function safeTimeout(fn, delay) {
   return setTimeout(fn, delay);
 }
 
-function scheduleTimers(client, sessionId, sessionTime, role, channel, guildId) {
+function scheduleTimers(client, sessionId, sessionTime, role, channel, guildId, recurring = false, callerTag = null, cap = null, extraMessage = '') {
   const now           = Date.now();
   const startDelay    = sessionTime - now;
   const reminderDelay = startDelay - 30 * 60 * 1000;
@@ -248,6 +258,57 @@ function scheduleTimers(client, sessionId, sessionTime, role, channel, guildId) 
         content:         `🚀 ${targets.join(' ')} — **${role.name}** session is **starting now!** Players in: ${going}`,
         allowedMentions: { users: role.members.filter(m => !mutedUserIds.includes(m.id)).map(m => m.id) }
       });
+
+      // Schedule next occurrence if recurring
+      if (recurring) {
+        try {
+          const nextTime  = sessionTime + WEEK_MS;
+          const nextId    = uuidv4();
+          const nextEmbed = buildEmbed(role.name, nextTime, callerTag, extraMessage, [], [], cap, true);
+          const nextRow   = buildButtons(nextId, false);
+
+          const nextMessage = await channel.send({
+            content:         `${role}`,
+            embeds:          [nextEmbed],
+            components:      [nextRow],
+            allowedMentions: { roles: [role.id] }
+          });
+
+          const nextTimers = scheduleTimers(client, nextId, nextTime, role, channel, guildId, true, callerTag, cap, extraMessage);
+
+          client.rsvpSessions[nextId] = {
+            rsvpYes:      [],
+            rsvpNo:       [],
+            message:      nextMessage,
+            role,
+            sessionTime:  nextTime,
+            extraMessage,
+            cap,
+            recurring:    true,
+            timers:       nextTimers,
+          };
+
+          addSession({
+            id:           nextId,
+            guildId,
+            game:         role.name.toLowerCase(),
+            time:         nextTime,
+            callerTag,
+            channelId:    channel.id,
+            messageId:    nextMessage.id,
+            cancelled:    false,
+            rsvpYes:      [],
+            rsvpNo:       [],
+            extraMessage,
+            cap,
+            recurring:    true,
+          });
+
+          console.log(`🔁 Scheduled next recurring session for ${role.name} at ${new Date(nextTime).toLocaleString()}`);
+        } catch (err) {
+          console.error('Failed to create next recurring session:', err.message);
+        }
+      }
     }, startDelay);
   }
 

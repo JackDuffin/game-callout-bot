@@ -5,9 +5,9 @@ const db = require('./db');
 function addSession(session) {
   db.prepare(`
     INSERT OR REPLACE INTO sessions
-      (id, guildId, game, time, callerTag, channelId, messageId, cancelled, rsvpYes, rsvpNo, extraMessage, cap)
+      (id, guildId, game, time, callerTag, channelId, messageId, cancelled, rsvpYes, rsvpNo, extraMessage, cap, recurring)
     VALUES
-      (@id, @guildId, @game, @time, @callerTag, @channelId, @messageId, @cancelled, @rsvpYes, @rsvpNo, @extraMessage, @cap)
+      (@id, @guildId, @game, @time, @callerTag, @channelId, @messageId, @cancelled, @rsvpYes, @rsvpNo, @extraMessage, @cap, @recurring)
   `).run({
     ...session,
     cancelled:    session.cancelled ? 1 : 0,
@@ -15,6 +15,7 @@ function addSession(session) {
     rsvpNo:       JSON.stringify(session.rsvpNo || []),
     extraMessage: session.extraMessage || '',
     cap:          session.cap ?? null,
+    recurring:    session.recurring ? 1 : 0,
   });
 
   db.prepare(`
@@ -182,7 +183,7 @@ function getDetailedStats(guildId, game, guild) {
   const peakHour    = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
   const peakHourStr = peakHour ? `${String(peakHour[0]).padStart(2, '0')}:00` : null;
 
-  const days     = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const days      = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const dayCounts = {};
   for (const s of sessions) {
     const day      = days[new Date(s.time).getDay()];
@@ -288,6 +289,7 @@ function deserialiseSession(row) {
     rsvpYes:   JSON.parse(row.rsvpYes || '[]'),
     rsvpNo:    JSON.parse(row.rsvpNo  || '[]'),
     cap:       row.cap ?? null,
+    recurring: row.recurring === 1,
   };
 }
 

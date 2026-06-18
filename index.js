@@ -30,14 +30,16 @@ client.once('clientReady', async () => {
 
   removeExpiredSessions();
 
-  const guild    = client.guilds.cache.first();
-  const sessions = readSessions(guild.id);
+  const sessions = readSessions();
   const now      = Date.now();
 
   for (const session of sessions) {
     if (session.cancelled || session.time <= now) continue;
 
     try {
+      const guild = client.guilds.cache.get(session.guildId);
+      if (!guild) continue;
+
       const channel = await client.channels.fetch(session.channelId);
       const role    = guild.roles.cache.find(r => r.name.toLowerCase() === session.game.toLowerCase());
       if (!channel || !role) continue;
@@ -53,7 +55,7 @@ client.once('clientReady', async () => {
         timers:       null,
       };
 
-      const timers = scheduleTimers(client, session.id, session.time, role, channel, guild.id);
+      const timers = scheduleTimers(client, session.id, session.time, role, channel, session.guildId);
       client.rsvpSessions[session.id].timers = timers;
 
       console.log(`🔁 Restored timer for ${session.game} session at ${new Date(session.time).toLocaleString()}`);
@@ -132,7 +134,7 @@ client.on('interactionCreate', async interaction => {
     await interaction.update({ content: 'Applying edit...', components: [] });
 
     const { applyEdit } = require('./commands/editschedule');
-    await applyEdit(interaction, session, pendingEdit.newTimeInput, pendingEdit.newMessage, true);
+    await applyEdit(interaction, session, pendingEdit.newTimeInput, pendingEdit.newCap, pendingEdit.newMessage, true);
     return;
   }
 
@@ -143,8 +145,8 @@ client.on('interactionCreate', async interaction => {
     const page      = parseInt(parts[2]);
     const gameName  = parts.slice(3).join('_') || null;
 
-    const newPage  = direction === 'next' ? page + 1 : page - 1;
-    const guildId  = interaction.guildId;
+    const newPage = direction === 'next' ? page + 1 : page - 1;
+    const guildId = interaction.guildId;
 
     const { getHistory, getHistoryCount } = require('./utils/sessionStore');
     const { buildHistoryEmbed, buildPaginationRow } = require('./commands/history');
@@ -155,6 +157,36 @@ client.on('interactionCreate', async interaction => {
     const sessions   = getHistory(guildId, gameName, 10, offset);
 
     const embed = buildHistoryEmbed(sessions, gameName, newPage, totalPages, total);
+    const row   = buildPaginationRow(gameName, newPage, totalPages);
+
+    await interaction.update({
+      embeds:     [embed],
+      components: row ? [row] : []
+    });
+    return;
+  }
+
+  // ── Sessions pagination buttons ───────────────────────────────────────────────
+  if (interaction.isButton() && (interaction.customId.startsWith('sessions_prev_') || interaction.customId.startsWith('sessions_next_'))) {
+    const parts     = interaction.customId.split('_');
+    const direction = parts[1];
+    const page      = parseInt(parts[2]);
+    const gameName  = parts.slice(3).join('_') || null;
+
+    const newPage = direction === 'next' ? page + 1 : page - 1;
+    const guildId = interaction.guildId;
+
+    const { buildSessionsEmbed, buildPaginationRow } = require('./commands/sessions');
+
+    let upcoming = getSessions(guildId);
+    if (gameName) upcoming = upcoming.filter(s => s.game.toLowerCase() === gameName);
+
+    const total      = upcoming.length;
+    const totalPages = Math.max(1, Math.ceil(total / 10));
+    const offset     = (newPage - 1) * 10;
+    const pageItems  = upcoming.slice(offset, offset + 10);
+
+    const embed = buildSessionsEmbed(pageItems, gameName, newPage, totalPages, total);
     const row   = buildPaginationRow(gameName, newPage, totalPages);
 
     await interaction.update({
@@ -181,7 +213,6 @@ client.on('interactionCreate', async interaction => {
       const userMention = interaction.user.toString();
       const alreadyYes  = session.rsvpYes.includes(userMention);
 
-      // Block new yes votes when full — allow existing yes voters to toggle freely
       if (isYes && !alreadyYes && session.cap !== null && session.rsvpYes.length >= session.cap) {
         return interaction.reply({ content: `❌ This session is full (${session.cap}/${session.cap}). You can't join the going list.`, flags: 64 });
       }

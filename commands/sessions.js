@@ -1,5 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getSessions } = require('../utils/sessionStore');
+
+const PAGE_SIZE = 10;
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -9,7 +11,12 @@ module.exports = {
       opt.setName('game')
         .setDescription('Filter by game (leave blank for all)')
         .setRequired(false)
-        .setAutocomplete(true)),
+        .setAutocomplete(true))
+    .addIntegerOption(opt =>
+      opt.setName('page')
+        .setDescription('Page number (default: 1)')
+        .setRequired(false)
+        .setMinValue(1)),
 
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused().toLowerCase();
@@ -23,40 +30,86 @@ module.exports = {
   },
 
   async execute(interaction) {
+    await interaction.deferReply({ flags: 64 });
+
     const gameName = interaction.options.getString('game')?.toLowerCase() || null;
-    let upcoming   = getSessions(interaction.guildId);
+    const page     = interaction.options.getInteger('page') || 1;
+    const guildId  = interaction.guildId;
 
-    if (gameName) {
-      upcoming = upcoming.filter(s => s.game.toLowerCase() === gameName);
-    }
+    let upcoming = getSessions(guildId);
+    if (gameName) upcoming = upcoming.filter(s => s.game.toLowerCase() === gameName);
 
-    if (upcoming.length === 0) {
-      return interaction.reply({
+    const total      = upcoming.length;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    if (total === 0) {
+      return interaction.editReply({
         content: gameName
           ? `📭 No upcoming sessions for **${gameName}**. Use /schedule to set one up!`
-          : '📭 No sessions scheduled yet. Use /schedule to set one up!',
-        flags: 64
+          : '📭 No sessions scheduled yet. Use /schedule to set one up!'
       });
     }
 
-    const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle(`📅 Upcoming Sessions${gameName ? ` — ${gameName}` : ''}`)
-      .setTimestamp();
-
-    for (const s of upcoming) {
-      const ts     = Math.floor(s.time / 1000);
-      const capStr = s.cap !== null
-        ? `${s.rsvpYes.length}/${s.cap} going`
-        : `✅ ${s.rsvpYes.length} going`;
-
-      embed.addFields({
-        name:   `🎮 ${s.game}`,
-        value:  `<t:${ts}:F> (<t:${ts}:R>)\nCalled by: ${s.callerTag} | ${capStr}`,
-        inline: false
+    if (page > totalPages) {
+      return interaction.editReply({
+        content: `❌ Page ${page} doesn't exist — there are only ${totalPages} page${totalPages === 1 ? '' : 's'}.`
       });
     }
 
-    await interaction.reply({ embeds: [embed], flags: 64 });
+    const offset   = (page - 1) * PAGE_SIZE;
+    const pageItems = upcoming.slice(offset, offset + PAGE_SIZE);
+
+    const embed = buildSessionsEmbed(pageItems, gameName, page, totalPages, total);
+    const row   = buildPaginationRow(gameName, page, totalPages);
+
+    await interaction.editReply({
+      embeds:     [embed],
+      components: row ? [row] : []
+    });
   }
 };
+
+function buildSessionsEmbed(sessions, gameName, page, totalPages, total) {
+  const embed = new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle(`📅 Upcoming Sessions${gameName ? ` — ${gameName}` : ''}`)
+    .setFooter({ text: `Page ${page} of ${totalPages} · ${total} session${total === 1 ? '' : 's'} total` })
+    .setTimestamp();
+
+  for (const s of sessions) {
+    const ts     = Math.floor(s.time / 1000);
+    const capStr = s.cap !== null
+      ? `${s.rsvpYes.length}/${s.cap} going`
+      : `✅ ${s.rsvpYes.length} going`;
+
+    embed.addFields({
+      name:   `🎮 ${s.game}`,
+      value:  `<t:${ts}:F> (<t:${ts}:R>)\nCalled by: ${s.callerTag} | ${capStr}`,
+      inline: false
+    });
+  }
+
+  return embed;
+}
+
+function buildPaginationRow(gameName, page, totalPages) {
+  if (totalPages <= 1) return null;
+
+  const gameStr = gameName || '';
+
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`sessions_prev_${page}_${gameStr}`)
+      .setLabel('◀ Previous')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page <= 1),
+    new ButtonBuilder()
+      .setCustomId(`sessions_next_${page}_${gameStr}`)
+      .setLabel('Next ▶')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page >= totalPages)
+  );
+}
+
+module.exports.buildSessionsEmbed = buildSessionsEmbed;
+module.exports.buildPaginationRow = buildPaginationRow;

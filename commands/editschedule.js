@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { getSessions, updateSession, getTimezone } = require('../utils/sessionStore');
-const { buildEmbed, parseSessionTime, scheduleTimers } = require('./schedule');
+const { buildEmbed, buildButtons, parseSessionTime, scheduleTimers } = require('./schedule');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -15,14 +15,20 @@ module.exports = {
       opt.setName('time')
         .setDescription('New time e.g. 21:30 or 21:30 25/04/27')
         .setRequired(false))
+    .addIntegerOption(opt =>
+      opt.setName('cap')
+        .setDescription('New player cap (0 to remove the cap)')
+        .setRequired(false)
+        .setMinValue(0)
+        .setMaxValue(99))
     .addStringOption(opt =>
       opt.setName('message')
         .setDescription('New message (use "none" to clear it)')
         .setRequired(false)),
 
   async autocomplete(interaction) {
-    const focused   = interaction.options.getFocused().toLowerCase();
-    const sessions  = getSessions(interaction.guildId);
+    const focused  = interaction.options.getFocused().toLowerCase();
+    const sessions = getSessions(interaction.guildId);
 
     const userGames = [...new Set(
       sessions
@@ -43,9 +49,10 @@ module.exports = {
     const input        = interaction.options.getString('game').toLowerCase();
     const newTimeInput = interaction.options.getString('time');
     const newMessage   = interaction.options.getString('message');
+    const newCap       = interaction.options.getInteger('cap') ?? null;
 
-    if (!newTimeInput && !newMessage) {
-      return interaction.editReply({ content: '❌ Please provide a new time, a new message, or both.' });
+    if (!newTimeInput && newMessage === null && newCap === null) {
+      return interaction.editReply({ content: '❌ Please provide a new time, cap, message, or any combination of the three.' });
     }
 
     const sessions     = getSessions(interaction.guildId);
@@ -63,7 +70,7 @@ module.exports = {
     }
 
     if (userSessions.length === 1) {
-      return applyEdit(interaction, userSessions[0], newTimeInput, newMessage, false);
+      return applyEdit(interaction, userSessions[0], newTimeInput, newCap, newMessage, false);
     }
 
     // Multiple sessions — show select menu
@@ -76,7 +83,7 @@ module.exports = {
       }));
 
     if (!interaction.client.pendingEdits) interaction.client.pendingEdits = {};
-    interaction.client.pendingEdits[interaction.user.id] = { newTimeInput, newMessage };
+    interaction.client.pendingEdits[interaction.user.id] = { newTimeInput, newCap, newMessage };
 
     const row = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
@@ -92,7 +99,7 @@ module.exports = {
   }
 };
 
-async function applyEdit(interaction, session, newTimeInput, newMessage, fromSelect = false) {
+async function applyEdit(interaction, session, newTimeInput, newCap, newMessage, fromSelect = false) {
   const liveSession = interaction.client.rsvpSessions?.[session.id];
 
   let newSessionTime = null;
@@ -112,10 +119,13 @@ async function applyEdit(interaction, session, newTimeInput, newMessage, fromSel
 
   const updatedTime    = newSessionTime ? newSessionTime.getTime() : session.time;
   const updatedMessage = newMessage === 'none' ? '' : (newMessage ?? session.extraMessage ?? '');
+  // newCap === 0 means clear it; newCap === null means unchanged
+  const updatedCap     = newCap === null ? (session.cap ?? null) : (newCap === 0 ? null : newCap);
 
   updateSession(session.id, {
     time:         updatedTime,
-    extraMessage: updatedMessage
+    extraMessage: updatedMessage,
+    cap:          updatedCap,
   });
 
   if (liveSession) {
@@ -135,9 +145,8 @@ async function applyEdit(interaction, session, newTimeInput, newMessage, fromSel
       }
     }
 
-    if (newMessage !== null) {
-      liveSession.extraMessage = updatedMessage;
-    }
+    if (newMessage !== null) liveSession.extraMessage = updatedMessage;
+    if (newCap !== null)     liveSession.cap = updatedCap;
 
     if (liveSession.message) {
       try {
@@ -151,10 +160,14 @@ async function applyEdit(interaction, session, newTimeInput, newMessage, fromSel
           updatedMessage,
           liveSession.rsvpYes,
           liveSession.rsvpNo,
-          liveSession.cap ?? null
+          updatedCap
         );
 
-        await liveSession.message.edit({ embeds: [updatedEmbed] });
+        const locked = updatedCap !== null && liveSession.rsvpYes.length >= updatedCap;
+        await liveSession.message.edit({
+          embeds:     [updatedEmbed],
+          components: [buildButtons(session.id, locked)]
+        });
       } catch (err) {
         console.error('Failed to edit session embed:', err.message);
       }
@@ -163,6 +176,7 @@ async function applyEdit(interaction, session, newTimeInput, newMessage, fromSel
 
   const changes = [];
   if (newSessionTime) changes.push(`🕐 Time → <t:${Math.floor(updatedTime / 1000)}:F>`);
+  if (newCap !== null) changes.push(`👥 Cap → ${updatedCap !== null ? updatedCap : '*(removed)*'}`);
   if (newMessage !== null) changes.push(`💬 Message → ${updatedMessage || '*(cleared)*'}`);
 
   const msg = { content: `✅ Session updated!\n${changes.join('\n')}`, flags: 64 };
