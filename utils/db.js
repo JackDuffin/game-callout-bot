@@ -1,12 +1,14 @@
 const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+const path     = require('path');
+const fs       = require('fs');
 
 const dataDir = path.join(__dirname, '../data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
 const db = new Database(path.join(dataDir, 'bot.db'));
 
+// WAL (Write-Ahead Logging) lets reads proceed concurrently with a write,
+// which matters when the bot is processing interactions while a timer fires.
 db.pragma('journal_mode = WAL');
 
 db.exec(`
@@ -34,6 +36,7 @@ db.exec(`
     PRIMARY KEY (guildId, game)
   );
 
+  -- One row per (guild, game, caller) so we can find the top organiser cheaply.
   CREATE TABLE IF NOT EXISTS callers (
     guildId TEXT NOT NULL,
     game TEXT NOT NULL,
@@ -42,6 +45,7 @@ db.exec(`
     PRIMARY KEY (guildId, game, callerTag)
   );
 
+  -- userId IS NULL means server-level; a non-null userId is a personal override.
   CREATE TABLE IF NOT EXISTS timezones (
     guildId TEXT NOT NULL,
     userId TEXT,
@@ -64,8 +68,10 @@ db.exec(`
   );
 `);
 
-// Migrations — safe to run on every startup
-const existingCols = db.prepare("PRAGMA table_info(sessions)").all().map(c => c.name);
+// Migrations — each block is idempotent; safe to run on every startup.
+// PRAGMA table_info is the simplest way to check for a column without
+// attempting the ALTER and catching the error.
+const existingCols = db.prepare('PRAGMA table_info(sessions)').all().map(c => c.name);
 
 if (!existingCols.includes('cap')) {
   db.exec('ALTER TABLE sessions ADD COLUMN cap INTEGER DEFAULT NULL');

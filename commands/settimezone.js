@@ -1,14 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { setTimezone, getTimezone } = require('../utils/sessionStore');
-
-function isValidTimezone(tz) {
-  try {
-    Intl.DateTimeFormat(undefined, { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
+const { isValidTimezone } = require('../utils/timezone');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -30,6 +22,8 @@ module.exports = {
       });
     }
 
+    // userId: null — this is the server-wide default, distinct from a
+    // member's personal override (set via /mytimezone with their own id).
     setTimezone(interaction.guildId, tz, null);
 
     await interaction.reply({

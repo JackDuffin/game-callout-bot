@@ -18,6 +18,7 @@ function addSession(session) {
     recurring:    session.recurring ? 1 : 0,
   });
 
+  // Upsert keeps count and lastSession in sync without a read-then-write.
   db.prepare(`
     INSERT INTO stats (guildId, game, count, lastSession)
     VALUES (@guildId, @game, 1, @time)
@@ -44,10 +45,12 @@ function updateSession(id, changes) {
     rsvpNo:  JSON.stringify(changes.rsvpNo  !== undefined ? changes.rsvpNo  : JSON.parse(existing.rsvpNo)),
   };
 
+  // cap is included in SET so that editschedule cap changes are actually persisted.
   db.prepare(`
     UPDATE sessions SET
       time         = @time,
       extraMessage = @extraMessage,
+      cap          = @cap,
       rsvpYes      = @rsvpYes,
       rsvpNo       = @rsvpNo
     WHERE id = @id
@@ -56,6 +59,7 @@ function updateSession(id, changes) {
   if (changes.time) {
     const game    = existing.game.toLowerCase();
     const guildId = existing.guildId;
+    // Recalculate lastSession from DB rather than trusting the in-memory value.
     const last    = db.prepare(`
       SELECT MAX(time) as maxTime FROM sessions
       WHERE guildId = ? AND game = ? AND cancelled = 0
@@ -122,10 +126,14 @@ function cancelSession(id) {
   const game    = session.game.toLowerCase();
   const guildId = session.guildId;
 
+  // Decrement the aggregate counts that addSession incremented.
+  // MAX(0, ...) guards against a count drifting negative due to data anomalies.
   db.prepare('UPDATE stats SET count = MAX(0, count - 1) WHERE guildId = ? AND game = ?').run(guildId, game);
   db.prepare('UPDATE callers SET count = MAX(0, count - 1) WHERE guildId = ? AND game = ? AND callerTag = ?').run(guildId, game, session.callerTag);
+  // Remove the caller row entirely once their count reaches zero.
   db.prepare('DELETE FROM callers WHERE guildId = ? AND game = ? AND callerTag = ? AND count = 0').run(guildId, game, session.callerTag);
 
+  // Recalculate lastSession now that this session is gone.
   const last = db.prepare(`
     SELECT MAX(time) as maxTime FROM sessions
     WHERE guildId = ? AND game = ? AND cancelled = 0
@@ -152,13 +160,25 @@ function getStats(guildId, game) {
     return { count: statsRow.count, lastSession: statsRow.lastSession, callers };
   }
 
-  const statsRows = db.prepare('SELECT * FROM stats WHERE guildId = ?').all(guildId);
-  const result    = {};
+  // Fetch all stats and all callers in two queries, then group callers by game
+  // in JS — avoids N+1 (one callers query per game in the original loop).
+  const statsRows  = db.prepare('SELECT * FROM stats WHERE guildId = ?').all(guildId);
+  const callerRows = db.prepare('SELECT * FROM callers WHERE guildId = ? ORDER BY count DESC').all(guildId);
+
+  // Group caller rows by game so we can look them up without extra queries.
+  const callersByGame = {};
+  for (const row of callerRows) {
+    if (!callersByGame[row.game]) callersByGame[row.game] = {};
+    callersByGame[row.game][row.callerTag] = row.count;
+  }
+
+  const result = {};
   for (const statsRow of statsRows) {
-    const callerRows = db.prepare('SELECT * FROM callers WHERE guildId = ? AND game = ? ORDER BY count DESC').all(guildId, statsRow.game);
-    const callers    = {};
-    for (const row of callerRows) callers[row.callerTag] = row.count;
-    result[statsRow.game] = { count: statsRow.count, lastSession: statsRow.lastSession, callers };
+    result[statsRow.game] = {
+      count:       statsRow.count,
+      lastSession: statsRow.lastSession,
+      callers:     callersByGame[statsRow.game] || {},
+    };
   }
   return result;
 }
@@ -202,6 +222,7 @@ function getDetailedStats(guildId, game, guild) {
   }
   const topRsvp = Object.entries(rsvpCounts).sort((a, b) => b[1] - a[1])[0];
 
+  // Streak counts consecutive calendar weeks that had at least one session.
   const weekNumbers = sessions.map(s => {
     const d           = new Date(s.time);
     const startOfYear = new Date(d.getFullYear(), 0, 1);
@@ -282,6 +303,8 @@ function getMutedUsers(guildId, game) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// Converts a raw DB row into a plain JS object with proper types.
+// Stored as integers (0/1) and JSON strings to satisfy SQLite's type system.
 function deserialiseSession(row) {
   return {
     ...row,

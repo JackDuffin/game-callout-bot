@@ -14,6 +14,8 @@ module.exports = {
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused().toLowerCase();
     const guild   = interaction.guild;
+    // Not restricted to the member's own games — stats are server-wide
+    // info, same as /history and /sessions.
     const roles   = guild.roles.cache
       .filter(r => r.name !== '@everyone' && !r.managed)
       .map(r => r.name);
@@ -28,6 +30,9 @@ module.exports = {
     const gameName = interaction.options.getString('game');
 
     if (gameName) {
+      // basic covers count/lastSession/callers (always available once a
+      // game has any sessions); detailed adds the deeper insights below and
+      // can be null if getDetailedStats has nothing to compute from.
       const basic    = getStats(interaction.guildId, gameName.toLowerCase());
       const detailed = getDetailedStats(interaction.guildId, gameName.toLowerCase(), interaction.guild);
 
@@ -48,10 +53,16 @@ module.exports = {
           { name: '🕐 Last Played',           value: lastPlayed,                                                           inline: true }
         );
 
+      // Group size relies on the live Discord role/member list rather than
+      // anything in the DB, so it's only shown when that lookup succeeded.
       if (detailed?.groupSize !== null && detailed?.groupSize !== undefined) {
         embed.addFields({ name: '👥 Group Size', value: `**${detailed.groupSize}** members`, inline: true });
       }
 
+      // Insights (peak day/time, streaks, etc.) need a minimum sample size
+      // to be meaningful — see getDetailedStats' hasEnoughData (3+ past
+      // sessions) — otherwise show a placeholder rather than noisy stats
+      // from one or two data points.
       if (!detailed || !detailed.hasEnoughData) {
         embed.addFields({
           name:   '📈 Insights',
@@ -71,7 +82,9 @@ module.exports = {
       return interaction.editReply({ embeds: [embed] });
     }
 
-    // All games summary
+    // No game specified — show a condensed one-line-per-game summary rather
+    // than the full detailed breakdown, which wouldn't scale to a server
+    // with many game groups.
     const stats = getStats(interaction.guildId, null);
 
     if (!stats || Object.keys(stats).length === 0) {

@@ -19,12 +19,26 @@ module.exports = {
       .filter(r => r.name !== '@everyone' && !r.managed)
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    // Group sessions by game in a single pass so the role loop below can do
+    // an O(1) lookup per role instead of re-filtering the whole `upcoming`
+    // array for every role (was O(roles * sessions), noticeable once a
+    // server accumulates a decent number of games and sessions).
+    // getSessions() already returns sessions ordered by time ASC, so each
+    // group stays sorted and [0] is still the next upcoming session.
+    const sessionsByGame = new Map();
+    for (const s of upcoming) {
+      if (!sessionsByGame.has(s.game)) sessionsByGame.set(s.game, []);
+      sessionsByGame.get(s.game).push(s);
+    }
+
+    // One line per game group, showing member count and (if any) the next
+    // scheduled session for that game.
     let groupLines = '';
     if (gameRoles.size === 0) {
       groupLines = '_No game groups yet. Use `/addgame` to create one._';
     } else {
       for (const [, role] of gameRoles) {
-        const sessionsForGame = upcoming.filter(s => s.game === role.name.toLowerCase());
+        const sessionsForGame = sessionsByGame.get(role.name.toLowerCase()) || [];
         const nextSession     = sessionsForGame.length > 0
           ? ` — next: <t:${Math.floor(sessionsForGame[0].time / 1000)}:R>`
           : '';
@@ -32,6 +46,9 @@ module.exports = {
       }
     }
 
+    // Flat list of every upcoming session across all games, independent of
+    // the per-role grouping above — this is the "everything at a glance"
+    // view for admins rather than a per-game breakdown.
     let sessionLines = '';
     if (upcoming.length === 0) {
       sessionLines = '_No sessions scheduled._';

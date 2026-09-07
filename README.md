@@ -1,6 +1,6 @@
 # GameCallout Bot 🎮
 
-**Version:** v0.4.0 | **Last Updated:** 18 June 2026
+**Version:** v0.5.0 | **Last Updated:** 7 September 2026
 
 ---
 
@@ -12,7 +12,7 @@ The core idea was simple: ping members with a game role when someone wanted to p
 
 Rather than dig back into old code and try to reorient myself around decisions I'd half forgotten, I decided to start fresh with a clearer vision of what I actually wanted to build. This remake keeps the same core idea — a tool for organising game nights with friends — but does it properly this time, with a structure I'm happy with and features that make it genuinely useful day to day.
 
-The long term plan is to eventually merge this with a second old bot and bring everything together into one. For now this is the foundation — the game night and community workflow side of things.
+The long term plan is to eventually merge this with a second bot I previously built — a music bot — bringing both into one unified bot. For now this is the foundation — the game night and community workflow side of things.
 
 ---
 
@@ -170,10 +170,10 @@ These are things I'd like to explore adding at some point — nothing confirmed 
 A third RSVP option — "maybe" — for members who aren't sure yet. Lower priority since the firm yes/no split is intentional, but worth revisiting.
 
 **Interaction handler consolidation**
-The pagination button handlers for `/sessions` and `/history` currently live inline in `index.js`. Moving these into their respective command files would keep `index.js` lean and make the codebase easier to navigate as it grows.
+The pagination handlers for `/sessions` and `/history`, along with the RSVP and select-menu button handlers, still live inline in `index.js`'s `interactionCreate` handler. The v0.5.0 pass hoisted the `require()` calls needed to reach their embed-building functions up to the top of the file, but the handling logic itself is still inline. Moving that logic into the respective command files would keep `index.js` leaner and make the codebase easier to navigate as it grows.
 
 **Second bot integration**
-The long term goal is to combine this with a second bot I previously built, merging both into a single unified bot. More details on that when the time comes.
+The long term goal is to combine this with a second bot I previously built — a music bot. Merging the two would bring music features into this project rather than building them out separately. More details on that when the time comes.
 
 ---
 
@@ -222,6 +222,31 @@ When both the VM bot and a local development instance ran simultaneously, Discor
 
 **Session restoration only worked for one server**
 On startup the bot was restoring timers only for the first guild in its cache, meaning sessions in any other server were silently lost after a restart. Fixed by reading all sessions from the database and looking up each session's guild by its stored `guildId`, so restoration works correctly regardless of how many servers the bot is in.
+
+### v0.5.0 — Cleanup & Hardening Pass
+
+After v0.4.0 landed the last of the core feature set, v0.5.0 was a dedicated cleanup and hardening pass — no new features, just bug fixes, deduplication, performance work, and documentation — worked through file by file so each change could be tested in isolation before moving to the next.
+
+**Bugs found and fixed:**
+- `scheduleTimers()` was being called with a truncated argument list in two places — `/editschedule`'s time-edit path and startup restoration in `index.js`. Both were missing `recurring`, `callerTag`, `cap`, and `extraMessage`, which silently reset a recurring session back to non-recurring the moment either path ran. Editing a session, or restarting the bot, partway through a recurring chain would simply stop it from producing new occurrences, with no visible error. Fixed by passing the full argument list at both call sites, and confirmed via live testing that a recurring chain now survives both a time edit and a bot restart.
+- Editing a session's player cap via `/editschedule` appeared to succeed but was silently dropped — `cap` had been left out of the SQL `UPDATE ... SET` clause in `updateSession()`, so the change never actually reached the database.
+- `parseSessionTime()`'s timezone offset calculation used a `toLocaleString()` → `new Date()` round-trip that silently depended on the *host machine's own local system timezone* for the intermediate parse — meaning scheduling only produced the correct time on a UTC-configured machine. Found while testing on a non-UTC Windows dev machine; fixed by switching to `Intl.DateTimeFormat.formatToParts()`, which reads the target timezone's wall-clock fields directly with no dependence on the host's own timezone.
+
+**Performance fixes:**
+- `/stats`'s all-games summary had an N+1 query — one extra query per game to fetch its top callers. Collapsed to two queries total, grouped in JS.
+- `scheduleTimers()`'s reminder and start timers each computed the muted/active member list twice per firing (once for the ping targets, again for `allowedMentions`). Now computed once and reused.
+- `/admin` re-filtered the full upcoming-sessions list once per game role to find each game's next session — quadratic in the number of roles. Replaced with a single pass that groups sessions by game into a `Map` up front.
+- `getHistory()` and `getHistoryCount()` each had two near-identical query blocks differing only in an optional game filter. Collapsed into one parameterised query each.
+
+**Deduplication:**
+- `isValidTimezone()` was defined identically in both `settimezone.js` and `mytimezone.js` — extracted to `utils/timezone.js`.
+- The live-session cleanup sequence (strip RSVP buttons, clear timers, remove from in-memory state) was written out in full in both `cancelsession.js` and the cancel-select handler in `index.js` — extracted to `utils/cancelHelper.js`.
+
+**Structural:**
+- A handful of `require()` calls inside `index.js`'s interaction handler were hoisted to the top of the file alongside everything else, since nothing about them needed to be lazy-loaded.
+
+**Documentation:**
+- Every file touched this pass received generous inline "why, not what" comments explaining non-obvious decisions — timezone math, timer overflow handling, the live-vs-persisted session state split, and so on — rather than restating what the code already makes clear.
 
 ---
 

@@ -14,7 +14,8 @@ module.exports = {
     const focused = interaction.options.getFocused().toLowerCase();
     const guild   = interaction.guild;
 
-    // Only show games the user hasn't already joined
+    // Only show games the user hasn't already joined — suggesting a game
+    // they're already in would just lead to the "already in" reply below.
     const roles = guild.roles.cache
       .filter(r => r.name !== '@everyone' && !r.managed && !interaction.member.roles.cache.has(r.id))
       .map(r => r.name);
@@ -27,11 +28,16 @@ module.exports = {
     const guild     = interaction.guild;
     const gameRoles = guild.roles.cache.filter(r => r.name !== '@everyone' && !r.managed);
 
+    // Distinct from "no game called X" below — this is "no games exist on
+    // this server at all", which needs an admin to fix rather than the
+    // member picking a different name.
     if (gameRoles.size === 0) {
       return interaction.reply({ content: '❌ No game groups exist yet. Ask an admin to add one with /addgame.', flags: 64 });
     }
 
     const input = interaction.options.getString('game').toLowerCase();
+    // Accept either the display name or a raw role id, same pattern used
+    // across the other game-lookup commands.
     const role  = gameRoles.find(r => r.name.toLowerCase() === input || r.id === input);
 
     if (!role) {
@@ -39,6 +45,9 @@ module.exports = {
       return interaction.reply({ content: `❌ **${input}** isn't a valid game group. Available groups:\n${list}`, flags: 64 });
     }
 
+    // Re-checked here even though autocomplete filters these out — a member
+    // can still type an arbitrary game name directly, bypassing the
+    // suggestion list.
     if (interaction.member.roles.cache.has(role.id)) {
       return interaction.reply({ content: `You're already in **${role.name}**!`, flags: 64 });
     }

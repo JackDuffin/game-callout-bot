@@ -13,6 +13,7 @@ module.exports = {
 
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused().toLowerCase();
+    // Only games the member is in — mirrors /mutereminders' autocomplete.
     const roles   = interaction.member.roles.cache
       .filter(r => r.name !== '@everyone' && !r.managed)
       .map(r => r.name);
@@ -24,6 +25,8 @@ module.exports = {
   async execute(interaction) {
     const gameName = interaction.options.getString('game');
     const guild    = interaction.guild;
+    // Exact match only, same as /mutereminders — this command's game name
+    // always comes from autocomplete, never a freeform id paste.
     const role     = guild.roles.cache.find(r =>
       r.name !== '@everyone' && !r.managed && r.name.toLowerCase() === gameName.toLowerCase()
     );

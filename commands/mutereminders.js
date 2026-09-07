@@ -13,6 +13,8 @@ module.exports = {
 
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused().toLowerCase();
+    // Only games the member is in — reminders only apply to groups you
+    // belong to in the first place.
     const roles   = interaction.member.roles.cache
       .filter(r => r.name !== '@everyone' && !r.managed)
       .map(r => r.name);
@@ -24,6 +26,9 @@ module.exports = {
   async execute(interaction) {
     const gameName = interaction.options.getString('game');
     const guild    = interaction.guild;
+    // Exact match only here (no id fallback like /join etc.) — the game
+    // name always comes from autocomplete for this command, never a
+    // freeform id paste, so a stricter match is fine.
     const role     = guild.roles.cache.find(r =>
       r.name !== '@everyone' && !r.managed && r.name.toLowerCase() === gameName.toLowerCase()
     );
@@ -36,6 +41,9 @@ module.exports = {
       return interaction.reply({ content: `❌ You're not in **${role.name}**.`, flags: 64 });
     }
 
+    // Mutes only affect the 30-minute/start reminder pings — the initial
+    // session announcement still role-pings everyone, muted or not, since
+    // that's the actual "a session was scheduled" notification.
     if (isMuted(interaction.guildId, interaction.user.id, role.name)) {
       return interaction.reply({ content: `🔇 You already have reminders muted for **${role.name}**.`, flags: 64 });
     }

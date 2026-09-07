@@ -20,6 +20,8 @@ module.exports = {
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused().toLowerCase();
 
+    // Only suggest games the member is already in — you can only call out
+    // a group you belong to, so anything else isn't a usable suggestion.
     const roles = interaction.member.roles.cache
       .filter(r => r.name !== '@everyone' && !r.managed)
       .map(r => r.name);
@@ -34,6 +36,9 @@ module.exports = {
     const extraMessage = interaction.options.getString('message') || '';
 
     const gameRoles = guild.roles.cache.filter(r => r.name !== '@everyone' && !r.managed);
+    // Accept either the display name or a raw role id, same pattern as
+    // /schedule, in case a member pastes a role mention/id instead of typing
+    // the name.
     const role      = gameRoles.find(r => r.name.toLowerCase() === input || r.id === input);
 
     if (!role) {
@@ -41,11 +46,16 @@ module.exports = {
       return interaction.reply({ content: `❌ No game group called **${input}**. Available groups:\n${list}`, flags: 64 });
     }
 
+    // Re-checked here even though autocomplete already filters to joined
+    // games — autocomplete only suggests, it doesn't stop a member from
+    // typing an arbitrary game name directly.
     if (!interaction.member.roles.cache.has(role.id)) {
       return interaction.reply({ content: `❌ You need to be in **${role.name}** to call out its members.`, flags: 64 });
     }
 
-    // Cooldown check
+    // Cooldown check — one callout per game per hour, regardless of who
+    // triggers it, to stop the same group being pinged repeatedly in a
+    // short window by different members.
     const now = Date.now();
     const row = db.prepare('SELECT lastAt FROM callout_cooldowns WHERE guildId = ? AND game = ?')
       .get(interaction.guildId, role.name.toLowerCase());
@@ -61,7 +71,8 @@ module.exports = {
       }
     }
 
-    // Record the callout
+    // Record the callout — upsert since a game may not have a cooldown row
+    // yet (first-ever callout) or may already have one to refresh.
     db.prepare(`
       INSERT INTO callout_cooldowns (guildId, game, lastAt)
       VALUES (?, ?, ?)
@@ -74,6 +85,8 @@ module.exports = {
       .addFields({ name: '📣 Called by', value: interaction.user.toString(), inline: true })
       .setTimestamp();
 
+    // Only set a description if a message was actually supplied — an empty
+    // description would just be visual clutter on the embed.
     if (extraMessage) {
       embed.setDescription(extraMessage);
     }

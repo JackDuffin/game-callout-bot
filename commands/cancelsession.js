@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { getSessions, cancelSession } = require('../utils/sessionStore');
+const { cleanupLiveSession } = require('../utils/cancelHelper');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -15,7 +16,9 @@ module.exports = {
     const focused      = interaction.options.getFocused().toLowerCase();
     const sessions     = getSessions(interaction.guildId);
 
-    // Only show games the user has scheduled sessions for
+    // Only show games the user has scheduled sessions for — cancellation is
+    // restricted to whoever originally scheduled it, so anything else would
+    // just be a suggestion the member can't act on anyway.
     const userGames = [...new Set(
       sessions
         .filter(s => s.callerTag === interaction.user.tag)
@@ -33,12 +36,17 @@ module.exports = {
     const input    = interaction.options.getString('game').toLowerCase();
     const sessions = getSessions(interaction.guildId);
 
+    // Scoped to sessions this member scheduled — same ownership rule as
+    // /editschedule, so one member can't cancel another's session.
     const userSessions = sessions.filter(s =>
       s.game.toLowerCase() === input &&
       s.callerTag === interaction.user.tag
     );
 
     if (userSessions.length === 0) {
+      // Distinguish "no session for this game" from "a session exists but
+      // you didn't schedule it" — gives a clearer error than a flat
+      // "not found" when the game itself is valid.
       const allForGame = sessions.filter(s => s.game.toLowerCase() === input);
       if (allForGame.length > 0) {
         return interaction.reply({ content: `❌ You didn't schedule any upcoming **${input}** sessions — only the person who scheduled it can cancel it.`, flags: 64 });
@@ -47,26 +55,26 @@ module.exports = {
     }
 
     if (userSessions.length === 1) {
-      const session     = userSessions[0];
-      const liveSession = interaction.client.rsvpSessions?.[session.id];
+      const session = userSessions[0];
 
+      // Marks the session cancelled in the DB (also rolls back stats/caller
+      // counts) — this is separate from, and always runs regardless of,
+      // whether a live in-memory session still exists to clean up below.
       cancelSession(session.id);
 
-      if (liveSession?.message) {
-        try { await liveSession.message.edit({ components: [] }); } catch {}
-      }
-      if (liveSession?.timers) {
-        clearTimeout(liveSession.timers.reminderTimer);
-        clearTimeout(liveSession.timers.startTimer);
-      }
-      delete interaction.client.rsvpSessions?.[session.id];
+      // Handles the in-memory side: stripping the RSVP buttons from the
+      // posted message, clearing both timers, and removing the rsvpSessions
+      // entry. Shared with the cancel_select handler in index.js so both
+      // cancellation paths behave identically.
+      await cleanupLiveSession(interaction.client, session.id);
 
       return interaction.reply({
         content: `✅ The **${session.game}** session scheduled for <t:${Math.floor(session.time / 1000)}:F> has been cancelled.`
       });
     }
 
-    // Multiple sessions — show select menu
+    // Multiple sessions for this game — show a select menu rather than
+    // guessing which one the member meant.
     const options = userSessions
       .sort((a, b) => a.time - b.time)
       .map(s => ({

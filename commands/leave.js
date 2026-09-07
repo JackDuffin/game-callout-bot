@@ -13,7 +13,8 @@ module.exports = {
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused().toLowerCase();
 
-    // Only show games the user is currently in
+    // Mirror image of /join's autocomplete — only games the member is
+    // currently in are valid things to leave.
     const roles = interaction.member.roles.cache
       .filter(r => r.name !== '@everyone' && !r.managed)
       .map(r => r.name);
@@ -31,6 +32,8 @@ module.exports = {
     }
 
     const input = interaction.options.getString('game').toLowerCase();
+    // Accept either the display name or a raw role id, same pattern used
+    // across the other game-lookup commands.
     const role  = memberRoles.find(r => r.name.toLowerCase() === input || r.id === input);
 
     if (!role) {

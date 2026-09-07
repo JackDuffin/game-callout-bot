@@ -21,6 +21,9 @@ module.exports = {
   async autocomplete(interaction) {
     const focused  = interaction.options.getFocused().toLowerCase();
     const guild    = interaction.guild;
+    // Unlike /schedule or /callout, history isn't restricted to games the
+    // member is in — past sessions are server-wide info, so every game
+    // group is a valid filter here.
     const roles    = guild.roles.cache
       .filter(r => r.name !== '@everyone' && !r.managed)
       .map(r => r.name);
@@ -46,6 +49,8 @@ module.exports = {
       });
     }
 
+    // Guard against a member requesting a page beyond what exists (e.g.
+    // typing a page number manually rather than using the buttons).
     if (page > totalPages) {
       return interaction.editReply({ content: `❌ Page ${page} doesn't exist — there are only ${totalPages} page${totalPages === 1 ? '' : 's'}.` });
     }
@@ -57,11 +62,17 @@ module.exports = {
 
     await interaction.editReply({
       embeds:     [embed],
+      // No row at all (rather than an empty array of buttons) when there's
+      // only one page — avoids showing disabled Previous/Next buttons that
+      // would never do anything.
       components: row ? [row] : []
     });
   }
 };
 
+// Shared between the initial /history reply and the history_prev_/next_
+// button handler in index.js, so paging through results looks identical to
+// the first page's embed.
 function buildHistoryEmbed(sessions, gameName, page, totalPages, total) {
   const embed = new EmbedBuilder()
     .setColor(0x5865F2)
@@ -72,6 +83,8 @@ function buildHistoryEmbed(sessions, gameName, page, totalPages, total) {
   for (const s of sessions) {
     const ts       = Math.floor(s.time / 1000);
     const yesCount = s.rsvpYes.length;
+    // "went" rather than "going" here since these are past sessions — the
+    // RSVP count is a historical record, not a live headcount.
     const capStr   = s.cap !== null ? `${yesCount}/${s.cap}` : `${yesCount} went`;
     embed.addFields({
       name:   `🎮 ${s.game} — <t:${ts}:D>`,
@@ -83,9 +96,14 @@ function buildHistoryEmbed(sessions, gameName, page, totalPages, total) {
   return embed;
 }
 
+// Returns null when there's nothing to paginate, so callers can skip
+// attaching a components row entirely rather than rendering dead buttons.
 function buildPaginationRow(gameName, page, totalPages) {
   if (totalPages <= 1) return null;
 
+  // customId encodes state directly (page, game filter) rather than
+  // looking anything up server-side, since button interactions carry no
+  // other context — the index.js handler parses this back out of the id.
   const gameStr = gameName || '';
 
   return new ActionRowBuilder().addComponents(

@@ -9,6 +9,9 @@ module.exports = {
     await interaction.deferReply({ flags: 64 });
 
     const guild = interaction.guild;
+    // Note: despite the variable name, this is actually every game-group
+    // role — i.e. roles that are NOT managed (managed roles are bot
+    // integration roles, which are never game groups) and not @everyone.
     const managedRoles = guild.roles.cache.filter(r =>
       r.name !== '@everyone' && !r.managed
     );
